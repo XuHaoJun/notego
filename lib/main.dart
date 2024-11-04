@@ -122,20 +122,106 @@ class _MyHomePageState extends State<MyHomePage> {
   // 新增一個 Map 來追踪每個抽屜的動畫狀態
   final Map<String, bool> _drawerAnimationStates = {};
   
-  // 處理抽屜動畫的方法
+  // 新增當前選中的抽屜
+  Drawer? selectedDrawer;
+  
+  // 獲取要顯示的筆記列表
+  List<Note> get displayedNotes => selectedDrawer?.notes ?? notes;
+  
+  // 獲取要顯示的標題
+  String get displayedTitle => selectedDrawer?.title ?? widget.title;
+  
+  // 處理抽屜��方法
   void _animateDrawer(String drawerId) {
     setState(() {
       _drawerAnimationStates[drawerId] = true;
     });
     
-    // 300ms 後重置動畫狀態
+    // 300ms 後重置動畫狀態和清除 lastNoteDropDrawerId
     Future.delayed(const Duration(milliseconds: 300), () {
       if (mounted) {
         setState(() {
           _drawerAnimationStates[drawerId] = false;
+          lastNoteDropDrawerId = null;
         });
       }
     });
+  }
+
+  // 新增方法：獲取不重複的抽屜名稱
+  String _getUniqueDrawerTitle(String baseTitle) {
+    // 移除尾部的數字和括號（如果有的話）
+    final RegExp regex = RegExp(r'(.*?)(?:\s*\(\d+\))?$');
+    final match = regex.firstMatch(baseTitle);
+    final originalTitle = match?.group(1)?.trim() ?? baseTitle.trim();
+    
+    // 計算現有相同名稱的數量
+    int count = drawers.where((drawer) {
+      String existingTitle = drawer.title;
+      // 移除現有抽屜名稱的數字後綴
+      final existingMatch = regex.firstMatch(existingTitle);
+      final existingOriginal = existingMatch?.group(1)?.trim() ?? existingTitle.trim();
+      return existingOriginal == originalTitle;
+    }).length;
+    
+    // 如果沒有重複，直接返回原始名稱
+    if (count == 0) {
+      return originalTitle;
+    }
+    
+    // 有重複則添加數字
+    return '$originalTitle (${count + 1})';
+  }
+
+  Future<void> _showAddDrawerDialog() async {
+    String? drawerName = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        final TextEditingController controller = TextEditingController();
+        
+        return AlertDialog(
+          title: Text('新增抽屜'),
+          content: TextField(
+            controller: controller,
+            decoration: InputDecoration(
+              labelText: '抽屜名稱',
+              hintText: '請輸入抽屜名稱',
+            ),
+            autofocus: true,
+            onSubmitted: (value) {
+              if (value.isNotEmpty) {
+                Navigator.of(dialogContext).pop(value.trim());
+              }
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: Text('取消'),
+            ),
+            TextButton(
+              onPressed: () {
+                if (controller.text.isNotEmpty) {
+                  Navigator.of(dialogContext).pop(controller.text.trim());
+                }
+              },
+              child: Text('確定'),
+            ),
+          ],
+        );
+      },
+    );
+
+    // 在對話框關閉後處理結果
+    if (drawerName != null && drawerName.isNotEmpty) {
+      setState(() {
+        // 使用 _getUniqueDrawerTitle 獲取不重複的名稱
+        String uniqueTitle = _getUniqueDrawerTitle(drawerName);
+        drawers.add(Drawer(title: uniqueTitle));
+      });
+    }
   }
 
   @override
@@ -143,7 +229,17 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text('Notes'),
+        leading: selectedDrawer != null
+            ? IconButton(
+                icon: Icon(Icons.arrow_back),
+                onPressed: () {
+                  setState(() {
+                    selectedDrawer = null;
+                  });
+                },
+              )
+            : null,
+        title: Text(displayedTitle),
       ),
       body: Column(
         children: [
@@ -155,10 +251,10 @@ class _MyHomePageState extends State<MyHomePage> {
                 border: Border(bottom: BorderSide(color: Colors.grey)),
               ),
               child: ListView.builder(
-                itemCount: notes.length,
+                itemCount: displayedNotes.length,
                 itemBuilder: (context, index) {
                   return Draggable<Note>(
-                    data: notes[index],
+                    data: displayedNotes[index],
                     feedback: Material(
                       child: Container(
                         padding: EdgeInsets.all(8),
@@ -173,11 +269,11 @@ class _MyHomePageState extends State<MyHomePage> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  notes[index].title,
+                                  displayedNotes[index].title,
                                   style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
                                 Text(
-                                  notes[index].content,
+                                  displayedNotes[index].content,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -189,15 +285,12 @@ class _MyHomePageState extends State<MyHomePage> {
                     ),
                     child: ListTile(
                       leading: Icon(Icons.drag_indicator),
-                      title: Text(notes[index].title),
+                      title: Text(displayedNotes[index].title),
                       subtitle: Text(
-                        notes[index].content,
+                        displayedNotes[index].content,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      onTap: () {
-                        // TODO: 實現查看/編輯筆記的邏輯
-                      },
                     ),
                   );
                 },
@@ -205,105 +298,103 @@ class _MyHomePageState extends State<MyHomePage> {
             ),
           ),
           
-          // 下半部分：抽屜列表
-          Expanded(
-            flex: 1,
-            child: ListView.builder(
-              itemCount: drawers.length,
-              itemBuilder: (context, index) {
-                return DragTarget<Note>(
-                  onWillAccept: (data) {
-                    // 當筆記懸停在抽屜上時的視覺反饋
-                    setState(() {
-                      lastNoteDropDrawerId = drawers[index].id;
-                    });
-                    return true;
-                  },
-                  onLeave: (data) {
-                    // 當筆記離開抽屜區域時
-                    setState(() {
-                      if (lastNoteDropDrawerId == drawers[index].id) {
-                        lastNoteDropDrawerId = null;
-                      }
-                    });
-                  },
-                  onAccept: (note) {
-                    setState(() {
-                      lastNoteDropDrawerId = drawers[index].id;
-                      drawers[index].notes.add(note);
-                      drawers[index].updatedAt = DateTime.now();
-                      notes.removeWhere((n) => n.id == note.id);
-                      // 觸發動畫
-                      _animateDrawer(drawers[index].id);
-                    });
-                  },
-                  builder: (context, candidateData, rejectedData) {
-                    bool isAnimating = _drawerAnimationStates[drawers[index].id] ?? false;
-                    bool isSelected = lastNoteDropDrawerId == drawers[index].id;
-                    
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeInOut,
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? Colors.blue.withOpacity(0.1)
-                            : null,
-                        border: Border.all(
-                          color: isAnimating 
-                              ? Colors.green 
-                              : Colors.transparent,
-                          width: isAnimating ? 2 : 0,
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          ListTile(
-                            leading: Icon(
-                              Icons.folder,
-                              color: isSelected ? Colors.blue : null,
-                            ),
-                            title: Text(drawers[index].title),
-                            subtitle: AnimatedDefaultTextStyle(
-                              duration: const Duration(milliseconds: 300),
-                              style: TextStyle(
-                                color: isAnimating 
-                                    ? Colors.green 
-                                    : Colors.grey,
-                                fontWeight: isAnimating 
-                                    ? FontWeight.bold 
-                                    : FontWeight.normal,
-                              ),
-                              child: Text('${drawers[index].notes.length} notes'),
-                            ),
+          // 下半部分：抽屜列表（只在未選擇抽屜時顯示）
+          if (selectedDrawer == null)  // 新增條件
+            Expanded(
+              flex: 1,
+              child: ListView.builder(
+                itemCount: drawers.length,
+                itemBuilder: (context, index) {
+                  return DragTarget<Note>(
+                    onWillAccept: (data) {
+                      setState(() {
+                        lastNoteDropDrawerId = drawers[index].id;
+                      });
+                      return true;
+                    },
+                    onLeave: (data) {
+                      setState(() {
+                        if (lastNoteDropDrawerId == drawers[index].id) {
+                          lastNoteDropDrawerId = null;
+                        }
+                      });
+                    },
+                    onAccept: (note) {
+                      setState(() {
+                        lastNoteDropDrawerId = drawers[index].id;
+                        drawers[index].notes.add(note);
+                        drawers[index].updatedAt = DateTime.now();
+                        notes.removeWhere((n) => n.id == note.id);
+                        _animateDrawer(drawers[index].id);
+                      });
+                    },
+                    builder: (context, candidateData, rejectedData) {
+                      bool isAnimating = _drawerAnimationStates[drawers[index].id] ?? false;
+                      bool isSelected = lastNoteDropDrawerId == drawers[index].id;
+                      
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        decoration: BoxDecoration(
+                          color: isSelected && candidateData.isNotEmpty
+                              ? Colors.blue.withOpacity(0.1)
+                              : null,
+                          border: Border.all(
+                            color: isAnimating ? Colors.green : Colors.transparent,
+                            width: isAnimating ? 2 : 0,
                           ),
-                          if (isAnimating)
-                            Positioned(
-                              right: 16,
-                              top: 0,
-                              bottom: 0,
-                              child: Center(
-                                child: Icon(
-                                  Icons.check_circle,
-                                  color: Colors.green,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
+                        ),
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.folder,
+                            color: isSelected && candidateData.isNotEmpty
+                                ? Colors.blue
+                                : null,
+                          ),
+                          title: Text(drawers[index].title),
+                          subtitle: Text('${drawers[index].notes.length} notes'),
+                          onTap: () {
+                            setState(() {
+                              selectedDrawer = drawers[index];
+                            });
+                          },
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-          ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // TODO: 實現添加新筆記的邏輯
-        },
-        child: const Icon(Icons.add),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 10.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            // 新增筆記按鈕
+            FloatingActionButton(
+              heroTag: 'addNote',  // 防止多個 FAB 的 hero animation 衝突
+              onPressed: () {
+                // TODO: 實現添加新筆記的邏輯
+              },
+              child: const Icon(Icons.note_add),
+              tooltip: '新增筆記',
+            ),
+            SizedBox(height: 16),  // 按鈕之間的間距
+            // 新增抽屜按鈕（只在主視圖顯示）
+            if (selectedDrawer == null)
+              FloatingActionButton(
+                heroTag: 'addDrawer',
+                onPressed: () => _showAddDrawerDialog(),
+                child: const Icon(Icons.create_new_folder),
+                tooltip: '新增抽屜',
+              ),
+          ],
+        ),
       ),
+      // 調整 FAB 位置
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 }
