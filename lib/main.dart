@@ -118,7 +118,25 @@ class _MyHomePageState extends State<MyHomePage> {
     Drawer(title: '個人'),
     Drawer(title: '購物清單'),
   ];
-  String? selectedDrawer;
+  String? lastNoteDropDrawerId;
+  // 新增一個 Map 來追踪每個抽屜的動畫狀態
+  final Map<String, bool> _drawerAnimationStates = {};
+  
+  // 處理抽屜動畫的方法
+  void _animateDrawer(String drawerId) {
+    setState(() {
+      _drawerAnimationStates[drawerId] = true;
+    });
+    
+    // 300ms 後重置動畫狀態
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          _drawerAnimationStates[drawerId] = false;
+        });
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -194,29 +212,84 @@ class _MyHomePageState extends State<MyHomePage> {
               itemCount: drawers.length,
               itemBuilder: (context, index) {
                 return DragTarget<Note>(
-                  onAcceptWithDetails: (target) {
+                  onWillAccept: (data) {
+                    // 當筆記懸停在抽屜上時的視覺反饋
                     setState(() {
-                      selectedDrawer = drawers[index].title;
-                      var draggingNote = target.data;
-                      // 將筆記添加到選定的抽屜中
-                      drawers[index].notes.add(draggingNote);
-                      // 更新抽屜的 updatedAt
+                      lastNoteDropDrawerId = drawers[index].id;
+                    });
+                    return true;
+                  },
+                  onLeave: (data) {
+                    // 當筆記離開抽屜區域時
+                    setState(() {
+                      if (lastNoteDropDrawerId == drawers[index].id) {
+                        lastNoteDropDrawerId = null;
+                      }
+                    });
+                  },
+                  onAccept: (note) {
+                    setState(() {
+                      lastNoteDropDrawerId = drawers[index].id;
+                      drawers[index].notes.add(note);
                       drawers[index].updatedAt = DateTime.now();
-                      // 從原始列表中移除筆記（使用 id 比較）
-                      notes.removeWhere((n) => n.id == draggingNote.id);
+                      notes.removeWhere((n) => n.id == note.id);
+                      // 觸發動畫
+                      _animateDrawer(drawers[index].id);
                     });
                   },
                   builder: (context, candidateData, rejectedData) {
-                    return ListTile(
-                      tileColor: selectedDrawer == drawers[index].title 
-                          ? Colors.blue.withOpacity(0.1) 
-                          : null,
-                      leading: Icon(Icons.folder),
-                      title: Text(drawers[index].title),
-                      subtitle: Text('${drawers[index].notes.length} notes'),
-                      onTap: () {
-                        // TODO: 實現查看抽屜內容的邏輯
-                      },
+                    bool isAnimating = _drawerAnimationStates[drawers[index].id] ?? false;
+                    bool isSelected = lastNoteDropDrawerId == drawers[index].id;
+                    
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? Colors.blue.withOpacity(0.1)
+                            : null,
+                        border: Border.all(
+                          color: isAnimating 
+                              ? Colors.green 
+                              : Colors.transparent,
+                          width: isAnimating ? 2 : 0,
+                        ),
+                      ),
+                      child: Stack(
+                        children: [
+                          ListTile(
+                            leading: Icon(
+                              Icons.folder,
+                              color: isSelected ? Colors.blue : null,
+                            ),
+                            title: Text(drawers[index].title),
+                            subtitle: AnimatedDefaultTextStyle(
+                              duration: const Duration(milliseconds: 300),
+                              style: TextStyle(
+                                color: isAnimating 
+                                    ? Colors.green 
+                                    : Colors.grey,
+                                fontWeight: isAnimating 
+                                    ? FontWeight.bold 
+                                    : FontWeight.normal,
+                              ),
+                              child: Text('${drawers[index].notes.length} notes'),
+                            ),
+                          ),
+                          if (isAnimating)
+                            Positioned(
+                              right: 16,
+                              top: 0,
+                              bottom: 0,
+                              child: Center(
+                                child: Icon(
+                                  Icons.check_circle,
+                                  color: Colors.green,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     );
                   },
                 );
